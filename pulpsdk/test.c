@@ -80,17 +80,17 @@ uint8_t is_feature_9_16(uint8_t y, uint8_t x) {
 
     // Check each pixel in the circle
     for (uint8_t i = 0; i < 16; i=i+4) {
-      int16_t nx_1 = x + circle[i][0];
-      int16_t ny_1 = y + circle[i][1];
+      uint8_t nx_1 = x + circle[i][0];
+      uint8_t ny_1 = y + circle[i][1];
 
-      int16_t nx_2 = x + circle[i+1][0];
-      int16_t ny_2 = y + circle[i+1][1];
+      uint8_t nx_2 = x + circle[i+1][0];
+      uint8_t ny_2 = y + circle[i+1][1];
 
-      int16_t nx_3 = x + circle[i+2][0];
-      int16_t ny_3 = y + circle[i+2][1];
+      uint8_t nx_3 = x + circle[i+2][0];
+      uint8_t ny_3 = y + circle[i+2][1];
 
-      int16_t nx_4 = x + circle[i+3][0];
-      int16_t ny_4 = y + circle[i+3][1];
+      uint8_t nx_4 = x + circle[i+3][0];
+      uint8_t ny_4 = y + circle[i+3][1];
 
 
       b_pattern = (b_pattern << 1) | (image[ny_1][nx_1] > high);
