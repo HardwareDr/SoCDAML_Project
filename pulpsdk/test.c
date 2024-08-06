@@ -118,10 +118,71 @@ uint8_t is_feature_9_16(uint8_t y, uint8_t x) {
     return 0;
 }
 
+uint8_t is_feature_9_16_simd(uint8_t y, uint8_t x) {
+
+    // Bit pattern for brighter and darker pixels
+    uint16_t b_pattern = 0;
+    uint16_t d_pattern = 0;
+
+    // Intensity of the central pixel
+    uint8_t intensity = image[y][x];
+
+    int16_t high = intensity + threshold;
+    int16_t low = intensity - threshold;
+
+    v4s x_vec = {x, x, x, x};
+    v4s y_vec = {y, y, y, y};
+
+    // Process 16 pixels in 4 iterations
+    for (uint8_t i = 0; i < 16; i += 4) {
+        // Load circle offsets
+        v4s circle_x = {circle[i][0], circle[i+1][0], circle[i+2][0], circle[i+3][0]};
+        v4s circle_y = {circle[i][1], circle[i+1][1], circle[i+2][1], circle[i+3][1]};
+
+        // Calculate neighboring pixel coordinates
+        v4s nx = __ADD4((x_vec), (circle_x));
+        v4s ny = __ADD4((y_vec), (circle_y));
+
+        // Load 4 neighboring pixels
+        v2s pixels_a = {
+            image[ny[0]][nx[0]],
+            image[ny[1]][nx[1]]};
+        
+        v2s pixels_b = {
+            image[ny[2]][nx[2]],
+            image[ny[3]][nx[3]]};
+
+        b_pattern = (b_pattern << 1) | (pixels_a[0] > high);
+        d_pattern = (d_pattern << 1) | (pixels_a[0] < low);
+
+        b_pattern = (b_pattern << 1) | (pixels_a[1] > high);
+        d_pattern = (d_pattern << 1) | (pixels_a[1] < low);
+
+        b_pattern = (b_pattern << 1) | (pixels_b[0] > high);
+        d_pattern = (d_pattern << 1) | (pixels_b[0] < low);
+
+        b_pattern = (b_pattern << 1) | (pixels_b[1] > high);
+        d_pattern = (d_pattern << 1) | (pixels_b[1] < low);
+
+    }
+
+    // Create a mask for 9 continuous bits
+    uint16_t mask = (1 << 9) - 1;
+
+    // Check if any 9 consecutive bits in the patterns are all 1
+    for (uint8_t i = 0; i < 8; i++) {
+        if (((b_pattern & (mask << i)) == (mask << i)) || ((d_pattern & (mask << i)) == (mask << i))) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 void fast_benchmark_singlecore() {
   for (uint8_t y = 3; y < SIZE-3; y++) {
     for (uint8_t x = 3; x < SIZE-3; x++) {
-        feature[y][x] = is_feature_9_16(y, x);
+        feature[y][x] = is_feature_9_16_simd(y, x);
         }
     }
 }
@@ -140,7 +201,7 @@ void fast_benchmark_multicore() {
   PERF_START_ON_CLUSTER
   for (uint8_t y = start; y < end; y++) {
     for (uint8_t x = start_x; x < end_x; x++) {
-        feature[y][x] = is_feature_9_16(y, x);
+        feature[y][x] = is_feature_9_16_simd(y, x);
       }
     }
   PERF_STOP_ON_CLUSTER
@@ -213,7 +274,7 @@ int main() {
     // Benchmark single core variant
     run_benchmark_on_fc("singlecore", fast_benchmark_singlecore);
     // Benchmark multicore variant 
-    run_benchmark_on_cluster("multicore", fast_benchmark_multicore);
+    // run_benchmark_on_cluster("multicore", fast_benchmark_multicore);
     // Benchmark SIMD variant
     return 0;
   }
