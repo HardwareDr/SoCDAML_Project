@@ -13,7 +13,6 @@ PI_L2 uint8_t feature[SIZE][SIZE];
 
 // Global Parameters
 uint8_t threshold = 20;
-uint8_t counter_threshold = 9;
 static const int circle[16][2] = {{0, 3}, {1, 3}, {2, 2}, {3, 1}, {3, 0}, {3, -1}, {2, -2}, {1, -3}, {0, -3}, {-1, -3}, {-2, -2}, {-3, -1}, {-3, 0}, {-3, 1}, {-2, 2}, {-1, 3}};
 
 // Function to Read Image from Memory
@@ -67,7 +66,7 @@ void perf_print_all_fixed() {
   }
 
 // Function to detect FAST features in the image
-int is_feature_9_16(uint8_t y, uint8_t x) {    
+uint8_t is_feature_9_16(uint8_t y, uint8_t x) {    
 
     // Bit pattern for brighter and darker pixels
     uint16_t b_pattern = 0;
@@ -93,36 +92,24 @@ int is_feature_9_16(uint8_t y, uint8_t x) {
       int16_t nx_4 = x + circle[i+3][0];
       int16_t ny_4 = y + circle[i+3][1];
 
-    // Skip if the pixel is outside the image
-    if (likely(!(nx_1 < 0 || nx_1 >= SIZE || ny_1 < 0 || ny_1 >= SIZE))) {
-        uint8_t pixel = image[ny_1][nx_1];
-        b_pattern = (b_pattern << 1) | (pixel > high);
-        d_pattern = (d_pattern << 1) | (pixel < low);
-    }
 
-    if (likely(!(nx_2 < 0 || nx_2 >= SIZE || ny_2 < 0 || ny_2 >= SIZE))) {
-        uint8_t pixel = image[ny_2][nx_2];
-        b_pattern = (b_pattern << 1) | (pixel > high);
-        d_pattern = (d_pattern << 1) | (pixel < low);
-    }
+      b_pattern = (b_pattern << 1) | (image[ny_1][nx_1] > high);
+      d_pattern = (d_pattern << 1) | (image[ny_1][nx_1] < low);
 
-    if (likely(!(nx_3 < 0 || nx_3 >= SIZE || ny_3 < 0 || ny_3 >= SIZE))) {
-        uint8_t pixel = image[ny_3][nx_3];
-        b_pattern = (b_pattern << 1) | (pixel > high);
-        d_pattern = (d_pattern << 1) | (pixel < low);
-    }
+      b_pattern = (b_pattern << 1) | (image[ny_2][nx_2] > high);
+      d_pattern = (d_pattern << 1) | (image[ny_2][nx_2] < low);
 
-    if (likely(!(nx_4 < 0 || nx_4 >= SIZE || ny_4 < 0 || ny_4 >= SIZE))) {
-        uint8_t pixel = image[ny_4][nx_4];
-        b_pattern = (b_pattern << 1) | (pixel > high);
-        d_pattern = (d_pattern << 1) | (pixel < low);
-    }
+      b_pattern = (b_pattern << 1) | (image[ny_3][nx_3] > high);
+      d_pattern = (d_pattern << 1) | (image[ny_3][nx_3] < low);
+
+      b_pattern = (b_pattern << 1) | (image[ny_4][nx_4] > high);
+      d_pattern = (d_pattern << 1) | (image[ny_4][nx_4] < low);
     }
     // Create a mask for 9 continuous bits
     uint16_t mask = (1 << 9) - 1;
 
     // Check if any 9 consecutive bits in the patterns are all 1
-    for (uint8_t i = 0; i <= 7; i++) {
+    for (uint8_t i = 0; i < 8; i++) {
         if (((b_pattern & (mask << i)) == (mask << i)) || ((d_pattern & (mask << i)) == (mask << i))) {
             return 1;
         }
@@ -132,8 +119,8 @@ int is_feature_9_16(uint8_t y, uint8_t x) {
 }
 
 void fast_benchmark_singlecore() {
-  for (uint8_t y = 0; y < SIZE; y++) {
-    for (uint8_t x = 0; x < SIZE; x++) {
+  for (uint8_t y = 3; y < SIZE-3; y++) {
+    for (uint8_t x = 3; x < SIZE-3; x++) {
         feature[y][x] = is_feature_9_16(y, x);
         }
     }
@@ -142,15 +129,19 @@ void fast_benchmark_singlecore() {
 void fast_benchmark_multicore() {
 
   int core_id = pi_core_id();
-  uint8_t start = core_id * CHUNK;
-  uint8_t end = start + CHUNK;
   
+  uint8_t start = (core_id==0) ? 3 : core_id * CHUNK;
+  uint8_t end = (core_id==NUM_CORES-1) ? SIZE-3 : core_id*CHUNK + CHUNK;
+  
+  uint8_t start_x = (core_id==0) ? 3 : 0;
+  uint8_t end_x = (core_id==NUM_CORES-1) ? SIZE-3 : SIZE;
+
   // Seperate Chunks of Images for Feature Detector
   PERF_START_ON_CLUSTER
   for (uint8_t y = start; y < end; y++) {
-    for (uint8_t x = 0; x < SIZE; x++) {
+    for (uint8_t x = start_x; x < end_x; x++) {
         feature[y][x] = is_feature_9_16(y, x);
-        }
+      }
     }
   PERF_STOP_ON_CLUSTER
 }
