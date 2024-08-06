@@ -178,7 +178,7 @@ void cluster_entry(void (*arg))
     pi_cl_team_fork((NUM_CORES), fast_benchmark_multicore, 0);
 }
 
-void run_benchmark_on_cluster(char* name, void (*benchmark_func)) {
+int run_benchmark_on_cluster(char* name, void (*benchmark_func)) {
   
   printf("Benchmarking function %s\n\r", name);
   pi_perf_conf(0x7FFFFFFF);
