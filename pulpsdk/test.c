@@ -13,7 +13,14 @@ PI_L2 uint8_t feature[SIZE][SIZE];
 
 // Global Parameters
 uint8_t threshold = 20;
-static const int circle[16][2] = {{0, 3}, {1, 3}, {2, 2}, {3, 1}, {3, 0}, {3, -1}, {2, -2}, {1, -3}, {0, -3}, {-1, -3}, {-2, -2}, {-3, -1}, {-3, 0}, {-3, 1}, {-2, 2}, {-1, 3}};
+// Access through single index
+// static const int8_t circle[16][2] = {{0, 3}, {1, 3}, {2, 2}, {3, 1}, {3, 0}, {3, -1}, {2, -2}, {1, -3}, {0, -3}, {-1, -3}, {-2, -2}, {-3, -1}, {-3, 0}, {-3, 1}, {-2, 2}, {-1, 3}};
+static const int8_t circle_x[16] = {0, 1, 2, 3, 3, 3, 2, 1, 0, -1, -2, -3, -3, -3, -2, -1};
+static const int8_t circle_y[16] = {3, 3, 2, 1, 0, -1, -2, -3, -3, -3, -2, -1, 0, 1, 2, 3};
+
+// Create pointers to circle_x and circle_y
+// v4s* circle_x_ptr = (v4s*)circle_x;
+// v4s* circle_y_ptr = (v4s*)circle_y;
 
 // Function to Read Image from Memory
 void init_image_feature()
@@ -80,18 +87,17 @@ uint8_t is_feature_9_16(uint8_t y, uint8_t x) {
 
     // Check each pixel in the circle
     for (uint8_t i = 0; i < 16; i=i+4) {
-      uint8_t nx_1 = x + circle[i][0];
-      uint8_t ny_1 = y + circle[i][1];
+      uint8_t nx_1 = x + circle_x[i];
+      uint8_t ny_1 = y + circle_y[i];
 
-      uint8_t nx_2 = x + circle[i+1][0];
-      uint8_t ny_2 = y + circle[i+1][1];
+      uint8_t nx_2 = x + circle_x[i+1];
+      uint8_t ny_2 = y + circle_y[i+1];
 
-      uint8_t nx_3 = x + circle[i+2][0];
-      uint8_t ny_3 = y + circle[i+2][1];
+      uint8_t nx_3 = x + circle_x[i+2];
+      uint8_t ny_3 = y + circle_y[i+2];
 
-      uint8_t nx_4 = x + circle[i+3][0];
-      uint8_t ny_4 = y + circle[i+3][1];
-
+      uint8_t nx_4 = x + circle_x[i+3];
+      uint8_t ny_4 = y + circle_y[i+3];
 
       b_pattern = (b_pattern << 1) | (image[ny_1][nx_1] > high);
       d_pattern = (d_pattern << 1) | (image[ny_1][nx_1] < low);
@@ -120,61 +126,102 @@ uint8_t is_feature_9_16(uint8_t y, uint8_t x) {
 
 uint8_t is_feature_9_16_simd(uint8_t y, uint8_t x) {
 
-    // Bit pattern for brighter and darker pixels
+    // Bit pattern for brighter and darker  
     uint16_t b_pattern = 0;
-    uint16_t d_pattern = 0;
 
     // Intensity of the central pixel
     uint8_t intensity = image[y][x];
+    v2s intensity_vec = __PACK2(intensity, intensity);
 
-    int16_t high = intensity + threshold;
-    int16_t low = intensity - threshold;
+    v4s x_vec = __PACK4(x, x, x, x);
+    v4s y_vec = __PACK4(y, y, y, y);
 
-    v4s x_vec = {x, x, x, x};
-    v4s y_vec = {y, y, y, y};
+    v4s* circle_x_ptr = (v4s*)circle_x;
+    v4s* circle_y_ptr = (v4s*)circle_y;
+
+    v2s result;
+    v2s result_vec;
 
     // Process 16 pixels in 4 iterations
     for (uint8_t i = 0; i < 16; i += 4) {
+        
         // Load circle offsets
-        v4s circle_x = {circle[i][0], circle[i+1][0], circle[i+2][0], circle[i+3][0]};
-        v4s circle_y = {circle[i][1], circle[i+1][1], circle[i+2][1], circle[i+3][1]};
+        v4s circle_x = *circle_x_ptr++;
+        v4s circle_y = *circle_y_ptr++;
 
         // Calculate neighboring pixel coordinates
         v4s nx = __ADD4((x_vec), (circle_x));
         v4s ny = __ADD4((y_vec), (circle_y));
 
+        // Calculate indices for 4 neighboring pixels
+
         // Load 4 neighboring pixels
-        v2s pixels_a = {
-            image[ny[0]][nx[0]],
-            image[ny[1]][nx[1]]};
+        uint8_t * idx_1 = Image_L2 + ny[0]*SIZE + nx[0];
+        uint8_t * idx_2 = Image_L2 + ny[1]*SIZE + nx[1];
+        uint8_t * idx_3 = Image_L2 + ny[2]*SIZE + nx[2];
+        uint8_t * idx_4 = Image_L2 + ny[3]*SIZE + nx[3];
+
+        v2s pixels_a = __PACK2(*idx_1, *idx_2);
+        v2s pixels_b = __PACK2(*idx_3, *idx_4);
+
+
+        // Calculate Absolute Difference with the central pixel
+        v2s abs_difference_a = __ABS2(__SUB2(pixels_a, intensity_vec));
+        v2s abs_difference_b = __ABS2(__SUB2(pixels_b, intensity_vec));
+
+        asm volatile ("pv.cmpgt.sc.h %0, %1, %2\n"
+                      : "=r" (result)
+                      : "r" (abs_difference_a), "r" (threshold));
+        result_vec = __PACK2(result[0]&1, result[1]&1);
+
+        b_pattern = (b_pattern << 1) | (result_vec[0]);
+        b_pattern = (b_pattern << 1) | (result_vec[1]);
+
+        asm volatile ("pv.cmpgt.sc.h %0, %1, %2\n"
+                      : "=r" (result)
+                      : "r" (abs_difference_b), "r" (threshold));
+        result_vec = __PACK2(result[0]&1, result[1]&1);
+
+        b_pattern = (b_pattern << 1) | (result_vec[0]);
+        b_pattern = (b_pattern << 1) | (result_vec[1]);
         
-        v2s pixels_b = {
-            image[ny[2]][nx[2]],
-            image[ny[3]][nx[3]]};
-
-        b_pattern = (b_pattern << 1) | (pixels_a[0] > high);
-        d_pattern = (d_pattern << 1) | (pixels_a[0] < low);
-
-        b_pattern = (b_pattern << 1) | (pixels_a[1] > high);
-        d_pattern = (d_pattern << 1) | (pixels_a[1] < low);
-
-        b_pattern = (b_pattern << 1) | (pixels_b[0] > high);
-        d_pattern = (d_pattern << 1) | (pixels_b[0] < low);
-
-        b_pattern = (b_pattern << 1) | (pixels_b[1] > high);
-        d_pattern = (d_pattern << 1) | (pixels_b[1] < low);
-
     }
 
-    // Create a mask for 9 continuous bits
-    uint16_t mask = (1 << 9) - 1;
+    v4u b_pattern_vec;
+    b_pattern_vec[0] = (uint8_t)((b_pattern >> 12) & 0xF); // Get the first 4 bits
+    b_pattern_vec[1] = (uint8_t)((b_pattern >> 8) & 0xF); // Get the next 4 bits
+    b_pattern_vec[2] = (uint8_t)((b_pattern >> 4) & 0xF); // Get the next 4 bits
+    b_pattern_vec[3] = (uint8_t)(b_pattern & 0xF); // Get the last 4 bits
 
-    // Check if any 9 consecutive bits in the patterns are all 1
+    uint8_t mask_4 = 15;
+    uint16_t mask_9 = (1 << 9) - 1;
+    v4u early_exit;
+
+    asm volatile ("pv.cmpeq.sc.b %0, %1, %2\n"
+                      : "=r" (early_exit)
+                      : "r" (b_pattern_vec), "r" (mask_4));
+
+    int total_set_bits = 0;
+    for(int i = 0; i < 4; i++) {
+      total_set_bits += __builtin_popcount(early_exit[i]);
+    }
+    if (likely(total_set_bits < 8)) {
+         return 0;
+    }
+    
+    // Do mask comparison with sliding window 
     for (uint8_t i = 0; i < 8; i++) {
-        if (((b_pattern & (mask << i)) == (mask << i)) || ((d_pattern & (mask << i)) == (mask << i))) {
+        if (((b_pattern & (mask_9 << i)) == (mask_9 << i))) {
             return 1;
         }
     }
+    
+    // // Do mask comparison with sliding window 
+    //   for (uint8_t i = 0; i < 8; i++) {
+    //      if (((b_pattern & (mask_9 << i)) == (mask_9 << i))) {
+    //          return 1;
+    //     }
+    // }
 
     return 0;
 }
@@ -201,7 +248,7 @@ void fast_benchmark_multicore() {
   PERF_START_ON_CLUSTER
   for (uint8_t y = start; y < end; y++) {
     for (uint8_t x = start_x; x < end_x; x++) {
-        feature[y][x] = is_feature_9_16_simd(y, x);
+        feature[y][x] = is_feature_9_16(y, x);
       }
     }
   PERF_STOP_ON_CLUSTER
