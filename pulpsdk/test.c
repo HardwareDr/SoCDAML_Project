@@ -15,13 +15,8 @@ PI_L2 uint8_t feature[SIZE][SIZE];
 // Global Parameters
 uint8_t threshold = 20;
 // Access through single index
-// static const int8_t circle[16][2] = {{0, 3}, {1, 3}, {2, 2}, {3, 1}, {3, 0}, {3, -1}, {2, -2}, {1, -3}, {0, -3}, {-1, -3}, {-2, -2}, {-3, -1}, {-3, 0}, {-3, 1}, {-2, 2}, {-1, 3}};
 static const int8_t circle_x[16] = {0, 1, 2, 3, 3, 3, 2, 1, 0, -1, -2, -3, -3, -3, -2, -1};
 static const int8_t circle_y[16] = {3, 3, 2, 1, 0, -1, -2, -3, -3, -3, -2, -1, 0, 1, 2, 3};
-
-// Create pointers to circle_x and circle_y
-// v4s* circle_x_ptr = (v4s*)circle_x;
-// v4s* circle_y_ptr = (v4s*)circle_y;
 
 // Function to Read Image from Memory
 void init_image_feature()
@@ -72,6 +67,56 @@ void perf_print_all_fixed() {
   if(pi_core_id() == 7) {            \
     pi_perf_stop(); \
   }
+
+// Function Port from C Baseline
+int is_feature_9_16_basic(uint8_t pixels[SIZE][SIZE], int x, int y, uint8_t threshold) {
+
+    // Total Points in the Circle
+    int points = 16;
+    // Counter for continuous pixels
+    int b_counter = 0;
+    int d_counter = 0;
+    int counter_threshold = 9;
+
+    // Coordinates of the circle around the pixel
+    int circle[16][2] = {{0, 3}, {1, 3}, {2, 2}, {3, 1}, {3, 0}, {3, -1}, {2, -2}, {1, -3}, {0, -3}, {-1, -3}, {-2, -2}, {-3, -1}, {-3, 0}, {-3, 1}, {-2, 2}, {-1, 3}};
+
+    // Intensity of the central pixel
+    int intensity = pixels[y][x];
+
+    // Check each pixel in the circle
+    for (int i = 0; i < points; i++) {
+        int nx = x + circle[i][0];
+        int ny = y + circle[i][1];
+
+        // Skip if the pixel is outside the image
+        if (nx < 0 || nx >= SIZE || ny < 0 || ny >= SIZE) {
+            continue;
+        }
+
+        // Check if the pixel is brighter or darker than the central pixel by the threshold
+        if (pixels[ny][nx] > intensity + threshold) {
+            b_counter++;
+            d_counter = 0;
+            if (b_counter == counter_threshold) {
+                return 1;
+            }
+        }
+        else if (pixels[ny][nx] < intensity - threshold) {
+            d_counter++;
+            b_counter = 0;
+            if (d_counter == counter_threshold) {
+                return 1;
+            }
+        }
+        else {
+            d_counter = 0;
+            b_counter = 0;
+        }
+    }
+
+    return 0;
+}
 
 // Function to detect FAST features in the image
 uint8_t is_feature_9_16_pattern(uint8_t y, uint8_t x) {    
@@ -354,6 +399,7 @@ void fast_benchmark_singlecore() {
   for (uint8_t y = 3; y < SIZE-3; y++) {
     for (uint8_t x = 3; x < SIZE-3; x++) {
         feature[y][x] = is_feature_9_16_optimized(y, x);
+        // feature[y][x] = is_feature_9_16_basic(image, x, y, threshold);
         }
     }
 }
@@ -434,7 +480,7 @@ int main() {
     init_image_feature();
     printf("Starting Benchmarks...\n\r");
     // Benchmark single core variant
-    run_benchmark_on_fc("singlecore", fast_benchmark_singlecore);
+    // run_benchmark_on_fc("singlecore", fast_benchmark_singlecore);
     // Benchmark multicore variant 
     run_benchmark_on_cluster("multicore", fast_benchmark_multicore);
     return 0;
