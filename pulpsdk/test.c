@@ -3,6 +3,7 @@
 #include "pmsis.h"
 #include "stimuli.h"
 #include <stdint.h>
+#include <stdlib.h>
 
 #define NUM_CORES 8
 #define CHUNK  SIZE/NUM_CORES
@@ -73,17 +74,13 @@ void perf_print_all_fixed() {
   }
 
 // Function to detect FAST features in the image
-uint8_t is_feature_9_16(uint8_t y, uint8_t x) {    
+uint8_t is_feature_9_16_pattern(uint8_t y, uint8_t x) {    
 
     // Bit pattern for brighter and darker pixels
     uint16_t b_pattern = 0;
-    uint16_t d_pattern = 0;
 
     // Intensity of the central pixel
     uint8_t intensity = image[y][x];
-
-    int16_t high = intensity + threshold;
-    int16_t low = intensity - threshold;
 
     // Check each pixel in the circle
     for (uint8_t i = 0; i < 16; i=i+4) {
@@ -99,26 +96,74 @@ uint8_t is_feature_9_16(uint8_t y, uint8_t x) {
       uint8_t nx_4 = x + circle_x[i+3];
       uint8_t ny_4 = y + circle_y[i+3];
 
-      b_pattern = (b_pattern << 1) | (image[ny_1][nx_1] > high);
-      d_pattern = (d_pattern << 1) | (image[ny_1][nx_1] < low);
+      uint16_t abs_difference_1 = abs((int)image[ny_1][nx_1] - intensity);
+      uint16_t abs_difference_2 = abs((int) image[ny_2][nx_2] - intensity);
+      uint16_t abs_difference_3 = abs((int) image[ny_3][nx_3] - intensity);
+      uint16_t abs_difference_4 = abs((int) image[ny_4][nx_4] - intensity);
 
-      b_pattern = (b_pattern << 1) | (image[ny_2][nx_2] > high);
-      d_pattern = (d_pattern << 1) | (image[ny_2][nx_2] < low);
-
-      b_pattern = (b_pattern << 1) | (image[ny_3][nx_3] > high);
-      d_pattern = (d_pattern << 1) | (image[ny_3][nx_3] < low);
-
-      b_pattern = (b_pattern << 1) | (image[ny_4][nx_4] > high);
-      d_pattern = (d_pattern << 1) | (image[ny_4][nx_4] < low);
+      b_pattern = b_pattern << 1 | (abs_difference_1 > threshold);
+      b_pattern = b_pattern << 1 | (abs_difference_2 > threshold);
+      b_pattern = b_pattern << 1 | (abs_difference_3 > threshold);
+      b_pattern = b_pattern << 1 | (abs_difference_4 > threshold);
     }
     // Create a mask for 9 continuous bits
     uint16_t mask = (1 << 9) - 1;
 
     // Check if any 9 consecutive bits in the patterns are all 1
-    for (uint8_t i = 0; i < 8; i++) {
-        if (((b_pattern & (mask << i)) == (mask << i)) || ((d_pattern & (mask << i)) == (mask << i))) {
+    for (uint8_t i = 0; i < 8; i=i+4) {
+        if (((b_pattern & (mask << i)) == (mask << i))) {
             return 1;
         }
+        if (((b_pattern & (mask << i+1)) == (mask << i+1))) {
+            return 1;
+        }
+        if (((b_pattern & (mask << i+2)) == (mask << i+2))) {
+            return 1;
+        }
+        if (((b_pattern & (mask << i+3)) == (mask << i+3))) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+// Function to detect FAST features in the image
+uint8_t is_feature_9_16_counter(uint8_t y, uint8_t x) {    
+
+    // Bit pattern for brighter and darker pixels
+    uint8_t counter = 0;
+
+    // Intensity of the central pixel
+    uint8_t intensity = image[y][x];
+
+    // Check each pixel in the circle
+    for (uint8_t i = 0; i < 16; i=i+4) {
+      uint8_t nx_1 = x + circle_x[i];
+      uint8_t ny_1 = y + circle_y[i];
+
+      uint8_t nx_2 = x + circle_x[i+1];
+      uint8_t ny_2 = y + circle_y[i+1];
+
+      uint8_t nx_3 = x + circle_x[i+2];
+      uint8_t ny_3 = y + circle_y[i+2];
+
+      uint8_t nx_4 = x + circle_x[i+3];
+      uint8_t ny_4 = y + circle_y[i+3];
+
+      uint16_t abs_difference_1 = abs((int)image[ny_1][nx_1] - intensity);
+      uint16_t abs_difference_2 = abs((int) image[ny_2][nx_2] - intensity);
+      uint16_t abs_difference_3 = abs((int) image[ny_3][nx_3] - intensity);
+      uint16_t abs_difference_4 = abs((int) image[ny_4][nx_4] - intensity);
+      
+      counter = (abs_difference_1 > threshold) ? counter+1 : 0;
+      if (counter == 9) return 1;
+      counter = (abs_difference_2 > threshold) ? counter+1 : 0;
+      if (counter == 9) return 1;
+      counter = (abs_difference_3 > threshold) ? counter+1 : 0;
+      if (counter == 9) return 1;
+      counter = (abs_difference_4 > threshold) ? counter+1 : 0;
+      if (counter == 9) return 1;
     }
 
     return 0;
@@ -187,41 +232,120 @@ uint8_t is_feature_9_16_simd(uint8_t y, uint8_t x) {
         
     }
 
-    v4u b_pattern_vec;
-    b_pattern_vec[0] = (uint8_t)((b_pattern >> 12) & 0xF); // Get the first 4 bits
-    b_pattern_vec[1] = (uint8_t)((b_pattern >> 8) & 0xF); // Get the next 4 bits
-    b_pattern_vec[2] = (uint8_t)((b_pattern >> 4) & 0xF); // Get the next 4 bits
-    b_pattern_vec[3] = (uint8_t)(b_pattern & 0xF); // Get the last 4 bits
+    // v4u b_pattern_vec;
+    // b_pattern_vec[0] = (uint8_t)((b_pattern >> 12) & 0xF); // Get the first 4 bits
+    // b_pattern_vec[1] = (uint8_t)((b_pattern >> 8) & 0xF); // Get the next 4 bits
+    // b_pattern_vec[2] = (uint8_t)((b_pattern >> 4) & 0xF); // Get the next 4 bits
+    // b_pattern_vec[3] = (uint8_t)(b_pattern & 0xF); // Get the last 4 bits
 
-    uint8_t mask_4 = 15;
-    uint16_t mask_9 = (1 << 9) - 1;
-    v4u early_exit;
+    // uint8_t mask_4 = 15;
+    // v4u early_exit;
 
-    asm volatile ("pv.cmpeq.sc.b %0, %1, %2\n"
-                      : "=r" (early_exit)
-                      : "r" (b_pattern_vec), "r" (mask_4));
+    // asm volatile ("pv.cmpeq.sc.b %0, %1, %2\n"
+    //                   : "=r" (early_exit)
+    //                   : "r" (b_pattern_vec), "r" (mask_4));
 
-    int total_set_bits = 0;
-    for(int i = 0; i < 4; i++) {
-      total_set_bits += __builtin_popcount(early_exit[i]);
-    }
-    if (likely(total_set_bits < 8)) {
-         return 0;
-    }
+    // int total_set_bits = 0;
+    // for(int i = 0; i < 4; i++) {
+    //   total_set_bits += __builtin_popcount(early_exit[i]);
+    // }
+    // if (likely(total_set_bits < 8)) {
+    //      return 0;
+    // }
     
-    // Do mask comparison with sliding window 
-    for (uint8_t i = 0; i < 8; i++) {
+    // // Do mask comparison with sliding window 
+    // for (uint8_t i = 0; i < 8; i++) {
+    //     if (((b_pattern & (mask_9 << i)) == (mask_9 << i))) {
+    //         return 1;
+    //     }
+    // }
+    
+    uint16_t mask_9 = (1 << 9) - 1; 
+    // Check if any 9 consecutive bits in the patterns are all 1
+    for (uint8_t i = 0; i < 8; i=i+4) {
         if (((b_pattern & (mask_9 << i)) == (mask_9 << i))) {
             return 1;
         }
+        if (((b_pattern & (mask_9 << i+1)) == (mask_9 << i+1))) {
+            return 1;
+        }
+        if (((b_pattern & (mask_9 << i+2)) == (mask_9 << i+2))) {
+            return 1;
+        }
+        if (((b_pattern & (mask_9 << i+3)) == (mask_9 << i+3))) {
+            return 1;
+        }
     }
-    
-    // // Do mask comparison with sliding window 
-    //   for (uint8_t i = 0; i < 8; i++) {
-    //      if (((b_pattern & (mask_9 << i)) == (mask_9 << i))) {
-    //          return 1;
-    //     }
-    // }
+
+    return 0;
+}
+
+// Function to detect FAST features in the image
+uint8_t is_feature_9_16_optimized(uint8_t y, uint8_t x) {    
+
+    // Bit pattern for brighter and darker  
+    uint16_t b_pattern = 0;
+
+    // Intensity of the central pixel
+    uint8_t intensity = image[y][x];
+    v2s intensity_vec = __PACK2(intensity, intensity);
+
+    v4s x_vec = __PACK4(x, x, x, x);
+    v4s y_vec = __PACK4(y, y, y, y);
+
+    v4s* circle_x_ptr = (v4s*)circle_x;
+    v4s* circle_y_ptr = (v4s*)circle_y;
+
+    // Check each pixel in the circle
+    for (uint8_t i = 0; i < 16; i=i+4) {
+      
+      // Load circle offsets
+        v4s circle_x = *circle_x_ptr++;
+        v4s circle_y = *circle_y_ptr++;
+
+        // Calculate neighboring pixel coordinates
+        v4s nx = __ADD4((x_vec), (circle_x));
+        v4s ny = __ADD4((y_vec), (circle_y));
+
+        // Calculate indices for 4 neighboring pixels
+
+        // Load 4 neighboring pixels
+        uint8_t * idx_1 = Image_L2 + ny[0]*SIZE + nx[0];
+        uint8_t * idx_2 = Image_L2 + ny[1]*SIZE + nx[1];
+        uint8_t * idx_3 = Image_L2 + ny[2]*SIZE + nx[2];
+        uint8_t * idx_4 = Image_L2 + ny[3]*SIZE + nx[3];
+
+        v2s pixels_a = __PACK2(*idx_1, *idx_2);
+        v2s pixels_b = __PACK2(*idx_3, *idx_4);
+
+
+        // Calculate Absolute Difference with the central pixel
+        v2s abs_difference_a = __ABS2(__SUB2(pixels_a, intensity_vec));
+        v2s abs_difference_b = __ABS2(__SUB2(pixels_b, intensity_vec));
+
+        b_pattern = b_pattern << 1 | (abs_difference_a[0] > threshold);
+        b_pattern = b_pattern << 1 | (abs_difference_a[1] > threshold);
+        b_pattern = b_pattern << 1 | (abs_difference_b[2] > threshold);
+        b_pattern = b_pattern << 1 | (abs_difference_b[3] > threshold);
+    }
+    // Create a mask for 9 continuous bits
+    uint16_t mask = (1 << 9) - 1;
+
+    // Check if any 9 consecutive bits in the patterns are all 1
+    for (uint8_t i = 0; i < 8; i=i+4) {
+        if (((b_pattern & (mask << i)) == (mask << i))) {
+            return 1;
+        }
+        if (((b_pattern & (mask << i+1)) == (mask << i+1))) {
+            return 1;
+        }
+        if (((b_pattern & (mask << i+2)) == (mask << i+2))) {
+            return 1;
+        }
+        if (((b_pattern & (mask << i+3)) == (mask << i+3))) {
+            return 1;
+        }
+    }
 
     return 0;
 }
@@ -229,7 +353,7 @@ uint8_t is_feature_9_16_simd(uint8_t y, uint8_t x) {
 void fast_benchmark_singlecore() {
   for (uint8_t y = 3; y < SIZE-3; y++) {
     for (uint8_t x = 3; x < SIZE-3; x++) {
-        feature[y][x] = is_feature_9_16_simd(y, x);
+        feature[y][x] = is_feature_9_16_optimized(y, x);
         }
     }
 }
@@ -248,10 +372,17 @@ void fast_benchmark_multicore() {
   PERF_START_ON_CLUSTER
   for (uint8_t y = start; y < end; y++) {
     for (uint8_t x = start_x; x < end_x; x++) {
-        feature[y][x] = is_feature_9_16(y, x);
+        feature[y][x] = is_feature_9_16_optimized(y, x);
       }
     }
   PERF_STOP_ON_CLUSTER
+  if(core_id == 7){
+    uint32_t instr_cnt = pi_perf_read(PI_PERF_INSTR);
+    uint32_t cycles_cnt = pi_perf_read(PI_PERF_CYCLES);
+    printf("Perf CYCLES: %d\n\r", cycles_cnt);
+    printf("Perf INSTR: %d\n\r", instr_cnt);
+    printf("CPI: %f\n", (float) cycles_cnt/instr_cnt);
+  }
 }
 
 void run_benchmark_on_fc(char* name, void (*benchmark_func)()) {
@@ -280,9 +411,6 @@ void cluster_entry(void (*arg))
 int run_benchmark_on_cluster(char* name, void (*benchmark_func)) {
   
   printf("Benchmarking function %s\n\r", name);
-  pi_perf_conf(0x7FFFFFFF);
-  pi_perf_reset();
-  pi_perf_start();
 
   struct pi_device cluster_dev;
   struct pi_cluster_conf cl_conf;
@@ -298,31 +426,17 @@ int run_benchmark_on_cluster(char* name, void (*benchmark_func)) {
   pi_cluster_send_task_to_cl(&cluster_dev, pi_cluster_task(&cl_task, cluster_entry, NULL));
 
   pi_cluster_close(&cluster_dev);
-  // cluster_wait keeps the FC waiting in a busy loop until cluster core 0
-  // finished execution. The benchmark function should make sure that not only
-  // core 0 finished but all 8 cores by using a synchronization barrier
-  pi_perf_stop();
-  uint32_t instr_cnt = pi_perf_read(PI_PERF_INSTR);
-  uint32_t cycles_cnt = pi_perf_read(PI_PERF_CYCLES);
-  perf_print_all_fixed();
-
-  printf("CPI: %f\n", (float) cycles_cnt/instr_cnt);
 }
 
 
 int main() {
-  // Check if we are the fabric controller (FC has cluster id != 0 which cluster
-  // cores have cluster id 0) We have this check since we will fork main on all
-  // cluster cores and don't need to rerun SoC initialization during parallel
-  // execution.
   if (pi_cluster_id() != 0){
     init_image_feature();
     printf("Starting Benchmarks...\n\r");
     // Benchmark single core variant
     run_benchmark_on_fc("singlecore", fast_benchmark_singlecore);
     // Benchmark multicore variant 
-    // run_benchmark_on_cluster("multicore", fast_benchmark_multicore);
-    // Benchmark SIMD variant
+    run_benchmark_on_cluster("multicore", fast_benchmark_multicore);
     return 0;
   }
 }
