@@ -4,6 +4,7 @@
 #include "stimuli.h"
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 #define NUM_CORES 8
 #define CHUNK  SIZE/NUM_CORES
@@ -29,6 +30,31 @@ void init_image_feature()
             feature[i][j] = 0;
         }
     }
+}
+
+void print_feature_matrix()
+{
+    for (int i = 0; i < SIZE; i++)
+    {
+        for (int j = 0; j < SIZE; j++)
+        {
+            printf("%d ", feature[i][j]);
+        }
+        printf("\n");
+    }
+}
+
+// Function to print the image
+void evaluate_matrix()
+{   int total_features = 0;
+    for (int i = 0; i < SIZE; i++)
+    {
+        for (int j = 0; j < SIZE; j++)
+        {
+            total_features += feature[i][j];
+        }
+    }
+    printf("Total Features: %d\n\r", total_features);
 }
 
 void perf_print_all_fixed() {
@@ -151,6 +177,7 @@ uint8_t is_feature_9_16_pattern(uint8_t y, uint8_t x) {
       b_pattern = b_pattern << 1 | (abs_difference_3 > threshold);
       b_pattern = b_pattern << 1 | (abs_difference_4 > threshold);
     }
+
     // Create a mask for 9 continuous bits
     uint16_t mask = (1 << 9) - 1;
 
@@ -368,11 +395,14 @@ uint8_t is_feature_9_16_optimized(uint8_t y, uint8_t x) {
         v2s abs_difference_a = __ABS2(__SUB2(pixels_a, intensity_vec));
         v2s abs_difference_b = __ABS2(__SUB2(pixels_b, intensity_vec));
 
+
         b_pattern = b_pattern << 1 | (abs_difference_a[0] > threshold);
         b_pattern = b_pattern << 1 | (abs_difference_a[1] > threshold);
-        b_pattern = b_pattern << 1 | (abs_difference_b[2] > threshold);
-        b_pattern = b_pattern << 1 | (abs_difference_b[3] > threshold);
+        b_pattern = b_pattern << 1 | (abs_difference_b[0] > threshold);
+        b_pattern = b_pattern << 1 | (abs_difference_b[1] > threshold);
+
     }
+
     // Create a mask for 9 continuous bits
     uint16_t mask = (1 << 9) - 1;
 
@@ -398,8 +428,7 @@ uint8_t is_feature_9_16_optimized(uint8_t y, uint8_t x) {
 void fast_benchmark_singlecore() {
   for (uint8_t y = 3; y < SIZE-3; y++) {
     for (uint8_t x = 3; x < SIZE-3; x++) {
-        feature[y][x] = is_feature_9_16_optimized(y, x);
-        // feature[y][x] = is_feature_9_16_basic(image, x, y, threshold);
+        feature[y][x] = is_feature_9_16_simd(y, x);
         }
     }
 }
@@ -418,7 +447,7 @@ void fast_benchmark_multicore() {
   PERF_START_ON_CLUSTER
   for (uint8_t y = start; y < end; y++) {
     for (uint8_t x = start_x; x < end_x; x++) {
-        feature[y][x] = is_feature_9_16_optimized(y, x);
+        feature[y][x] = is_feature_9_16_pattern(y, x);
       }
     }
   PERF_STOP_ON_CLUSTER
@@ -444,9 +473,9 @@ void run_benchmark_on_fc(char* name, void (*benchmark_func)()) {
   pi_perf_stop();
   uint32_t instr_cnt = pi_perf_read(PI_PERF_INSTR);
   uint32_t cycles_cnt = pi_perf_read(PI_PERF_CYCLES);
-  perf_print_all_fixed();
+  // perf_print_all_fixed();
 
-  printf("CPI: %f\n", (float) cycles_cnt/instr_cnt);
+  // printf("CPI: %f\n", (float) cycles_cnt/instr_cnt);
 }
 
 void cluster_entry(void (*arg))
@@ -480,9 +509,11 @@ int main() {
     init_image_feature();
     printf("Starting Benchmarks...\n\r");
     // Benchmark single core variant
-    // run_benchmark_on_fc("singlecore", fast_benchmark_singlecore);
+    run_benchmark_on_fc("singlecore", fast_benchmark_singlecore);
+    evaluate_matrix();
+    print_feature_matrix();
     // Benchmark multicore variant 
-    run_benchmark_on_cluster("multicore", fast_benchmark_multicore);
+    // run_benchmark_on_cluster("multicore", fast_benchmark_multicore);
     return 0;
   }
 }
