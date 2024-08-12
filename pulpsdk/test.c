@@ -723,8 +723,9 @@ void fast_benchmark_multicore() {
     
     for (uint8_t y = start_y; y < end_y; y++) {
       for (uint8_t x = start_x; x < end_x; x++) {
-       // Bit pattern for brighter and darker  
+          // Bit pattern for brighter and darker  
     uint16_t b_pattern = 0;
+    actual_output[y][x] = 0;  
 
     // Intensity of the central pixel
     uint8_t intensity = image[y][x];
@@ -736,72 +737,139 @@ void fast_benchmark_multicore() {
     v4s* circle_x_ptr = (v4s*)circle_x;
     v4s* circle_y_ptr = (v4s*)circle_y;
 
-    v2s result;
-    v2s result_vec;
 
-    uint8_t * central_pixel_address = &image[0][0];
 
-    // Process 16 pixels in 4 iterations
-    for (uint8_t i = 0; i < 16; i += 4) {
-        
-        // Load circle offsets
-        v4s circle_x = *circle_x_ptr++;
-        v4s circle_y = *circle_y_ptr++;
+    int output_pattern = 0;
+    v4s vec_mid = {};
+    v4s circle_x = {};
+    v4s circle_y={};
+    v4s nx = {};
+    v4s ny = {};
+
+      uint8_t* centre_pixel_addr = 0;
+    // Load 4 neighboring pixels
+    uint8_t * idx_1 = 0;
+    uint8_t * idx_2 = 0;
+    uint8_t * idx_3 = 0;
+    uint8_t * idx_4 = 0;
+    v2s dotp2_mask_0 = {-0x8, -0x4};
+    v2s dotp2_mask_1 = {-0x2, -0x1};
+
+    v2s pixels_a = {};
+    v2s pixels_b = {};
+
+    v2s abs_difference_a = {};
+    v2s abs_difference_b = {};
+
+
+    v2s a_gt_threshold = {};
+    v2s b_gt_threshold = {};
+
+
+
+    // Check each pixel in the circle
+    for (uint8_t i = 0; i < 16; i=i+4) {
+      
+      // Load circle offsets
+        circle_x = *circle_x_ptr++;
+        circle_y = *circle_y_ptr++;
 
         // Calculate neighboring pixel coordinates
-        v4s nx = __ADD4((x_vec), (circle_x));
-        v4s ny = __ADD4((y_vec), (circle_y));
+        nx = __ADD4((x_vec), (circle_x));
+        ny = __ADD4((y_vec), (circle_y));
 
         // Calculate indices for 4 neighboring pixels
 
-        // Load 4 neighboring pixels
-        uint8_t * idx_1 = central_pixel_address + ny[0]*SIZE + nx[0];
-        uint8_t * idx_2 = central_pixel_address + ny[1]*SIZE + nx[1];
-        uint8_t * idx_3 = central_pixel_address + ny[2]*SIZE + nx[2];
-        uint8_t * idx_4 = central_pixel_address + ny[3]*SIZE + nx[3];
+        centre_pixel_addr = &image[0][0];
 
-        v2s pixels_a = __PACK2(*idx_1, *idx_2);
-        v2s pixels_b = __PACK2(*idx_3, *idx_4);
+        // Load 4 neighboring pixels
+        idx_1 = centre_pixel_addr + ny[0]*SIZE + nx[0];
+        idx_2 = centre_pixel_addr + ny[1]*SIZE + nx[1];
+        idx_3 = centre_pixel_addr + ny[2]*SIZE + nx[2];
+        idx_4 = centre_pixel_addr + ny[3]*SIZE + nx[3];
+
+        pixels_a = __PACK2(*idx_1, *idx_2);
+        pixels_b = __PACK2(*idx_3, *idx_4);
 
 
         // Calculate Absolute Difference with the central pixel
-        v2s abs_difference_a = __ABS2(__SUB2(pixels_a, intensity_vec));
-        v2s abs_difference_b = __ABS2(__SUB2(pixels_b, intensity_vec));
+        abs_difference_a = __ABS2(__SUB2(pixels_a, intensity_vec));
+        abs_difference_b = __ABS2(__SUB2(pixels_b, intensity_vec));
 
-        asm volatile ("pv.cmpgt.sc.h %0, %1, %2\n"
-                      : "=r" (result)
-                      : "r" (abs_difference_a), "r" (threshold));
-        result_vec = __PACK2(result[0]&1, result[1]&1);
 
-        b_pattern = (b_pattern << 1) | (result_vec[0]);
-        b_pattern = (b_pattern << 1) | (result_vec[1]);
-
-        asm volatile ("pv.cmpgt.sc.h %0, %1, %2\n"
-                      : "=r" (result)
-                      : "r" (abs_difference_b), "r" (threshold));
-        result_vec = __PACK2(result[0]&1, result[1]&1);
-
-        b_pattern = (b_pattern << 1) | (result_vec[0]);
-        b_pattern = (b_pattern << 1) | (result_vec[1]);
         
+        asm volatile ("pv.cmpgt.sc.h %0, %1, %2\n"
+                      : "=r" (a_gt_threshold)
+                      : "r" (abs_difference_a), "r" (threshold));
+        
+        int res_val = __builtin_pulp_dotsp2(a_gt_threshold, dotp2_mask_0); 
+        asm volatile ("pv.cmpgt.sc.h %0, %1, %2\n"
+                      : "=r" (b_gt_threshold)
+                      : "r" (abs_difference_b), "r" (threshold));
+        res_val = __builtin_pulp_sdotsp2(b_gt_threshold, dotp2_mask_1, res_val); 
+        vec_mid[i>>2] = res_val; 
     }
+    v4s early_exit_mask;
+    asm volatile ("pv.cmpeq.sc.b %0, %1, %2\n"
+                : "=r" (early_exit_mask)
+                : "r" (vec_mid), "r" (vec_mid_mask));
     
-    uint16_t mask_9 = (1 << 9) - 1; 
-    // Check if any 9 consecutive bits in the patterns are all 1
-    for (uint8_t i = 0; i < 8; i=i+4) {
-        if (((b_pattern & (mask_9 << i)) == (mask_9 << i))) {
-            actual_output[y][x] = 1;
-        }
-        if (((b_pattern & (mask_9 << i+1)) == (mask_9 << i+1))) {
-            actual_output[y][x] = 1;
-        }
-        if (((b_pattern & (mask_9 << i+2)) == (mask_9 << i+2))) {
-            actual_output[y][x] = 1;
-        }
-        if (((b_pattern & (mask_9 << i+3)) == (mask_9 << i+3))) {
-            actual_output[y][x] = 1;
-        }
-    }
+    int is_early_exit_flag = __builtin_pulp_dotsp4(def_mask, early_exit_mask); 
+    if(is_early_exit_flag)
+    {
+      v4s vec0_broadcast = {vec_mid[0],vec_mid[0],vec_mid[0],vec_mid[0]};
+      v4s vec1_broadcast = {vec_mid[1],vec_mid[1],vec_mid[1],vec_mid[1]};
+      v4s vec2_broadcast = {vec_mid[2],vec_mid[2],vec_mid[2],vec_mid[2]};
+      v4s vec3_broadcast = {vec_mid[3],vec_mid[3],vec_mid[3],vec_mid[3]};
+      v4s matrix_0_mask = {};
+      v4s matrix_2_mask = {};
+      v4s matrix_0_mask_sll = {};
+      v4s matrix_2_mask_srl= {};
+      v4s sum_stage_0 = {};
+      v4s final_vec_result = {};
+      int cmp_val_edge = 0x1F;
+      v4s cmp_edge_vec_result = {};
+      int res = 0;
+      if(early_exit_mask[1])
+      {
+        matrix_0_mask = __AND4(vec0_broadcast, and_mask_0) ;
+        matrix_0_mask_sll = __SLL4(matrix_0_mask, sll_mask_0);
+        matrix_2_mask_srl = __SRL4(vec2_broadcast, srl_mask_2);
+
+        sum_stage_0   = __OR4(matrix_0_mask_sll, matrix_2_mask_srl);
+
+        asm volatile ("pv.cmpeq.sc.b %0, %1, %2\n"
+                  : "=r" (cmp_edge_vec_result)
+                  : "r" (sum_stage_0), "r" (cmp_val_edge));
+      
+
+        res = __builtin_pulp_dotsp4(def_mask, cmp_edge_vec_result); 
+
+        if(res)
+        {
+          actual_output[y][x] = 1; 
+        } 
+      }
+      if (early_exit_mask[2] & (res == 0))
+      {
+          matrix_0_mask = __AND4(vec1_broadcast, and_mask_0) ;
+          matrix_0_mask_sll = __SLL4(matrix_0_mask, sll_mask_0);
+          matrix_2_mask_srl = __SRL4(vec3_broadcast, srl_mask_2);
+
+          sum_stage_0   = __OR4(matrix_0_mask_sll, matrix_2_mask_srl);
+
+          asm volatile ("pv.cmpeq.sc.b %0, %1, %2\n"
+                      : "=r" (cmp_edge_vec_result)
+                      : "r" (sum_stage_0), "r" (cmp_val_edge));
+          
+          res = __builtin_pulp_dotsp4(def_mask, cmp_edge_vec_result); 
+
+          if(res)
+          {
+              actual_output[y][x] = 1;  
+          }
+      }
+    } // earl_exit_loop
 
     }
     }
